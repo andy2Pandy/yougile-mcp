@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: yougile-mcp
+    runtime: docker
+    plan: free
+    envVars:
+      - key: MCP_TRANSPORT
+        value: streamable-http
+      - key: YOUGILE_BASE_URL
+        value: https://yougile.com
+      - key: YOUGILE_API_KEY
+        sync: false
+      - key: YOUGILE_COMPANY_ID
+        sync: false
+      - key: YOUGILE_READ_ONLY
+        value: "true"
+      - key: MCP_URL_TOKEN
+        sync: false
