@@ -1,0 +1,44 @@
+name: Smoke test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Compile Python sources
+        run: python -m compileall -q run_server.py src
+      - name: Import remote server
+        env:
+          MCP_TRANSPORT: streamable-http
+          MCP_URL_TOKEN: smoke-test-token
+          YOUGILE_API_KEY: smoke-test-api-key
+          YOUGILE_COMPANY_ID: 00000000-0000-0000-0000-000000000000
+          YOUGILE_READ_ONLY: "true"
+        run: |
+          python - <<'PY'
+          from src import server
+
+          assert server.MCP_PATH == "/smoke-test-token/mcp"
+          try:
+              server._require_write_access()
+          except PermissionError:
+              pass
+          else:
+              raise AssertionError("read-only guard did not block writes")
+          print("remote MCP import and read-only guard: ok")
+          PY
