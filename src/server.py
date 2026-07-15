@@ -6,6 +6,7 @@ Registers all tools, resources, and prompts for YouGile API access.
 """
 
 import asyncio
+import os
 from mcp.server.fastmcp import FastMCP, Context
 from .config import settings
 from .core import auth
@@ -93,28 +94,68 @@ from .yougile_mcp.prompts.workflow_prompts import (
     retrospective_analysis_prompt,
 )
 
-# Create MCP server instance
-mcp = FastMCP(name=settings.server_name)
+# Transport is stdio locally and Streamable HTTP on a hosted service.
+MCP_TRANSPORT = os.getenv("MCP_TRANSPORT", "stdio").strip().lower()
+MCP_URL_TOKEN = os.getenv("MCP_URL_TOKEN", "").strip().strip("/")
+MCP_PATH = f"/{MCP_URL_TOKEN}/mcp" if MCP_URL_TOKEN else "/mcp"
+
+# Streamable HTTP is stateless so the service can be safely restarted or scaled.
+mcp = FastMCP(
+    name=settings.server_name,
+    instructions=(
+        "YouGile integration. Start with list/read tools and resolve project, board, "
+        "column, user, and task IDs before acting. The server is read-only unless "
+        "YOUGILE_READ_ONLY is explicitly set to false. Never request a YouGile "
+        "password through chat."
+    ),
+    host="0.0.0.0",
+    port=int(os.getenv("PORT", "8000")),
+    stateless_http=True,
+    json_response=True,
+    streamable_http_path=MCP_PATH,
+)
+
+
+def _require_local_auth_management() -> None:
+    """Keep password-based key management away from remote MCP clients."""
+    if MCP_TRANSPORT != "stdio":
+        raise PermissionError(
+            "Password-based YouGile authentication tools are disabled remotely. "
+            "Configure YOUGILE_API_KEY and YOUGILE_COMPANY_ID as hosting secrets."
+        )
+
+
+def _require_write_access() -> None:
+    """Block mutations while the safe pilot mode is enabled."""
+    if settings.yougile_read_only:
+        raise PermissionError(
+            "YouGile MCP is running in read-only mode. Set YOUGILE_READ_ONLY=false "
+            "on the host only after write operations have been reviewed."
+        )
 
 # Register MCP Tools
 @mcp.tool()
 async def get_companies(login: str, password: str, ctx: Context) -> list:
     """Get list of companies available to user for API access."""
+    _require_local_auth_management()
     return await get_companies_tool(login, password, ctx)
 
 @mcp.tool()
 async def create_api_key(login: str, password: str, company_id: str, ctx: Context) -> dict:
     """Create API key for accessing YouGile API.""" 
+    _require_local_auth_management()
     return await create_api_key_tool(login, password, company_id, ctx)
 
 @mcp.tool()
 async def list_api_keys(login: str, password: str, company_id: str = None, ctx: Context = None) -> list:
     """Get list of existing API keys. Useful for managing keys (max 30 per account)."""
+    _require_local_auth_management()
     return await list_api_keys_tool(login, password, company_id, ctx)
 
 @mcp.tool()
 async def delete_api_key(api_key: str, ctx: Context) -> dict:
     """Delete an API key. Useful for cleaning up old keys."""
+    _require_local_auth_management()
     return await delete_api_key_tool(api_key, ctx)
 
 @mcp.tool()
@@ -148,6 +189,7 @@ async def list_users(ctx: Context) -> list:
 @mcp.tool()
 async def invite_user(email: str, first_name: str, last_name: str, role: str = "user", departments: list = None, ctx: Context = None) -> dict:
     """Invite a new user to the company."""
+    _require_write_access()
     return await invite_user_tool(email, first_name, last_name, role, departments or [], ctx)
 
 @mcp.tool()
@@ -158,11 +200,13 @@ async def get_user(user_id: str, ctx: Context) -> dict:
 @mcp.tool()
 async def update_user(user_id: str, first_name: str = None, last_name: str = None, role: str = None, departments: list = None, ctx: Context = None) -> dict:
     """Update user information."""
+    _require_write_access()
     return await update_user_tool(user_id, first_name, last_name, role, departments, ctx)
 
 @mcp.tool()
 async def remove_user(user_id: str, ctx: Context) -> dict:
     """Remove user from the company."""
+    _require_write_access()
     return await remove_user_tool(user_id, ctx)
 
 # Project Management Tools
@@ -174,6 +218,7 @@ async def list_projects(ctx: Context) -> list:
 @mcp.tool()
 async def create_project(title: str, users: dict = None, workflow_id: str = None, ctx: Context = None) -> dict:
     """Create a new project."""
+    _require_write_access()
     return await create_project_tool(title, users, workflow_id, ctx)
 
 @mcp.tool()
@@ -184,6 +229,7 @@ async def get_project(project_id: str, ctx: Context) -> dict:
 @mcp.tool()
 async def update_project(project_id: str, title: str = None, users: dict = None, workflow_id: str = None, ctx: Context = None) -> dict:
     """Update project information."""
+    _require_write_access()
     return await update_project_tool(project_id, title, users, workflow_id, ctx)
 
 # Board Management Tools
@@ -195,6 +241,7 @@ async def list_boards(project_id: str = None, title: str = None, limit: int = 50
 @mcp.tool()
 async def create_board(title: str, project_id: str, workflow_id: str = None, ctx: Context = None) -> dict:
     """Create a new board in a project."""
+    _require_write_access()
     return await create_board_tool(title, project_id, workflow_id, ctx)
 
 @mcp.tool()
@@ -205,6 +252,7 @@ async def get_board(board_id: str, ctx: Context) -> dict:
 @mcp.tool()
 async def update_board(board_id: str, title: str = None, workflow_id: str = None, ctx: Context = None) -> dict:
     """Update board information."""
+    _require_write_access()
     return await update_board_tool(board_id, title, workflow_id, ctx)
 
 # Column Management Tools
@@ -216,6 +264,7 @@ async def list_columns(board_id: str = None, ctx: Context = None) -> list:
 @mcp.tool()
 async def create_column(title: str, board_id: str, color: int = None, ctx: Context = None) -> dict:
     """Create a new column in a board. Color must be between 1-16."""
+    _require_write_access()
     return await create_column_tool(title, board_id, color, ctx)
 
 @mcp.tool()
@@ -226,6 +275,7 @@ async def get_column(column_id: str, ctx: Context) -> dict:
 @mcp.tool()
 async def update_column(column_id: str, title: str = None, color: int = None, ctx: Context = None) -> dict:
     """Update column information. Color must be between 1-16."""
+    _require_write_access()
     return await update_column_tool(column_id, title, color, ctx)
 
 # Task Management Tools
@@ -254,6 +304,7 @@ async def create_task(title: str, column_id: str, description: str = None, assig
     - Multiple checklists: [{"title": "Backend", "items": [...]}, {"title": "Frontend", "items": [...]}]
     - Each item MUST have "isCompleted" field (boolean)
     """
+    _require_write_access()
     return await create_task_tool(title, column_id, description, assigned_users, deadline, time_tracking, stickers, subtasks, checklists, completed, archived, ctx)
 
 @mcp.tool()
@@ -289,11 +340,13 @@ async def update_task(task_id: str, title: str = None, description: str = None, 
     - Multiple checklists: [{"title": "Backend", "items": [...]}, {"title": "Frontend", "items": [...]}]
     - Each item MUST have "isCompleted" field (boolean)
     """
+    _require_write_access()
     return await update_task_tool(task_id, title, description, column_id, assigned_users, deadline, time_tracking, stickers, subtasks, checklists, completed, archived, deleted, ctx)
 
 @mcp.tool()  
 async def delete_task(task_id: str, ctx: Context = None) -> dict:
     """Delete a task (soft delete)."""
+    _require_write_access()
     return await update_task_tool(task_id, deleted=True, ctx=ctx)
 
 @mcp.tool()
@@ -306,6 +359,7 @@ async def set_task_deadline(task_id: str, deadline_timestamp: int, start_date_ti
         start_date_timestamp: Optional start date timestamp in MILLISECONDS
         with_time: Whether to display time on the sticker, or only date
     """
+    _require_write_access()
     # Auto-convert seconds to milliseconds if needed
     if deadline_timestamp < 10000000000:  # Less than 10 digits = seconds
         deadline_timestamp *= 1000
@@ -332,6 +386,7 @@ async def set_task_deadline(task_id: str, deadline_timestamp: int, start_date_ti
 @mcp.tool()
 async def set_task_time_tracking(task_id: str, planned_hours: int = None, actual_hours: int = None, ctx: Context = None) -> dict:
     """Set task time tracking sticker."""
+    _require_write_access()
     time_tracking_data = {}
     if planned_hours is not None:
         time_tracking_data["plan"] = planned_hours
@@ -342,11 +397,13 @@ async def set_task_time_tracking(task_id: str, planned_hours: int = None, actual
 @mcp.tool()
 async def set_task_custom_stickers(task_id: str, sticker_values: dict, ctx: Context = None) -> dict:
     """Set custom stickers on task (sticker_id -> state_id mapping)."""
+    _require_write_access()
     return await update_task_tool(task_id, stickers=sticker_values, ctx=ctx)
 
 @mcp.tool()  
 async def remove_task_sticker(task_id: str, sticker_type: str, ctx: Context = None) -> dict:
     """Remove sticker from task by setting it to deleted/removed state."""
+    _require_write_access()
     if sticker_type == "deadline":
         return await update_task_tool(task_id, deadline={"deleted": True}, ctx=ctx)
     elif sticker_type == "timeTracking":
@@ -364,6 +421,7 @@ async def get_task_chat_subscribers(task_id: str, ctx: Context) -> list:
 @mcp.tool()
 async def update_task_chat_subscribers(task_id: str, subscribers: list, ctx: Context) -> dict:
     """Update task chat subscribers list."""
+    _require_write_access()
     return await update_task_chat_subscribers_tool(task_id, subscribers, ctx)
 
 # String Stickers Management Tools
@@ -400,6 +458,7 @@ async def list_group_chats(ctx: Context) -> list:
 @mcp.tool()
 async def create_group_chat(title: str, participants: list = None, ctx: Context = None) -> dict:
     """Create a new group chat."""
+    _require_write_access()
     return await create_group_chat_tool(title, participants, ctx)
 
 @mcp.tool()
@@ -415,6 +474,7 @@ async def get_chat_messages(chat_id: str, limit: int = 50, ctx: Context = None) 
 @mcp.tool()
 async def send_chat_message(chat_id: str, message: str, ctx: Context = None) -> dict:
     """Send a message to a chat (add comment to task or send group chat message)."""
+    _require_write_access()
     return await send_chat_message_tool(chat_id, message, ctx)
 
 @mcp.tool()
@@ -425,6 +485,7 @@ async def get_chat_message(chat_id: str, message_id: str, ctx: Context = None) -
 @mcp.tool()
 async def update_chat_message(chat_id: str, message_id: str, message: str, ctx: Context = None) -> dict:
     """Update/edit a message in a chat."""
+    _require_write_access()
     return await update_chat_message_tool(chat_id, message_id, message, ctx)
 
 # Task Comment Tools (convenient aliases)
@@ -443,6 +504,7 @@ async def add_task_comment(task_id: str, comment: str, ctx: Context = None) -> d
     - Example: "Status update<br><br><b>Progress:</b><br>• Completed testing<br>• Ready for review"
     - Plain text will display incorrectly in YouGile interface!
     """
+    _require_write_access()
     return await add_task_comment_tool(task_id, comment, ctx)
 
 # Register MCP Resources
@@ -650,11 +712,29 @@ def load_api_key_from_credentials() -> str:
 
 def main():
     """Main entry point for the server."""
-    # Initialize authentication if credentials are provided
-    if settings.yougile_email and settings.yougile_password and settings.yougile_company_id:
+    if MCP_TRANSPORT == "streamable-http" and not MCP_URL_TOKEN:
+        raise RuntimeError(
+            "MCP_URL_TOKEN is required for remote mode so the endpoint is not public at /mcp"
+        )
+    if MCP_TRANSPORT == "streamable-http" and not (
+        settings.yougile_api_key and settings.yougile_company_id
+    ):
+        raise RuntimeError(
+            "YOUGILE_API_KEY and YOUGILE_COMPANY_ID are required for remote mode"
+        )
+
+    # Hosted deployments use a pre-created API key and never need a password.
+    if settings.yougile_api_key and settings.yougile_company_id:
+        auth.auth_manager.set_credentials(
+            settings.yougile_api_key,
+            settings.yougile_company_id,
+        )
+    elif settings.yougile_email and settings.yougile_password and settings.yougile_company_id:
         asyncio.run(initialize_auth())
-    
-    mcp.run()
+
+    if MCP_TRANSPORT not in {"stdio", "streamable-http"}:
+        raise ValueError("MCP_TRANSPORT must be 'stdio' or 'streamable-http'")
+    mcp.run(transport=MCP_TRANSPORT)
 
 
 if __name__ == "__main__":

@@ -6,11 +6,18 @@ Manages environment variables and default values.
 import os
 from pathlib import Path
 from typing import Optional
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     """YouGile MCP server configuration."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_prefix="",
+        case_sensitive=False,
+        extra="ignore",
+    )
     
     # YouGile API settings
     yougile_base_url: str = "https://yougile.com"
@@ -18,6 +25,7 @@ class Settings(BaseSettings):
     yougile_password: Optional[str] = None
     yougile_company_id: Optional[str] = None
     yougile_api_key: Optional[str] = None
+    yougile_read_only: bool = True
     
     # HTTP client settings
     yougile_timeout: int = 30
@@ -35,12 +43,6 @@ class Settings(BaseSettings):
     debug: bool = False
     log_level: str = "INFO"
     
-    class Config:
-        env_prefix = "YOUGILE_"
-        env_file = ".env"
-        case_sensitive = False
-
-
 # Find .env file relative to this settings.py file
 def find_env_file():
     """Find .env file in project root."""
